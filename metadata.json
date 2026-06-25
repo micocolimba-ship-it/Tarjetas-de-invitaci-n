@@ -1,0 +1,6 @@
+{
+  "name": "Invitaciones Familiares",
+  "description": "Plataforma de tarjetas de invitación personalizadas con confirmación de asistencia y sección de aportes para las familias en Chile y Colombia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,139 @@
+<!-- Editorial White v1.0 - Editorial Collection - Matrimonio -->
+<div class="w-full min-h-screen bg-[#F7F4EF] text-[#2D2D2D] py-10 px-4 sm:px-8 font-sans flex flex-col items-center selection:bg-[#C7A873]/20" style="font-family: '{{fontBody}}', sans-serif;">
+  
+  <!-- Cover Card -->
+  <div class="w-full max-w-xl bg-white rounded-[32px] overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.03)] border border-[#E9E3DA] mb-8 transition-transform duration-500 hover:shadow-[0_12px_40px_rgb(0,0,0,0.05)]">
+    <!-- Cover Image -->
+    <div class="relative w-full aspect-[4/5] overflow-hidden">
+      <img src="{{imageUrl}}" class="w-full h-full object-cover transition-transform duration-[2000ms] ease-out hover:scale-105" alt="Cover" />
+      <div class="absolute inset-4 border border-[#C7A873]/30 pointer-events-none rounded-[20px]"></div>
+      <div class="absolute top-8 right-8 bg-white/95 backdrop-blur-xs px-3 py-1.5 rounded-full border border-[#E9E3DA] text-[9px] uppercase tracking-widest text-[#2D2D2D] font-extrabold shadow-3xs">
+        Colección Editorial
+      </div>
+    </div>
+    
+    <!-- Hero Details -->
+    <div class="p-8 sm:p-12 text-center flex flex-col items-center">
+      <span class="text-[11px] uppercase tracking-[0.25em] text-[#C7A873] font-bold mb-4">Invitación Oficial</span>
+      
+      <h1 class="text-3xl sm:text-4xl text-[#2D2D2D] leading-tight tracking-tight mb-4" style="font-family: '{{fontTitle}}', serif;">
+        {{title}}
+      </h1>
+      
+      <div class="w-24 h-[1px] bg-[#E9E3DA] relative my-5">
+        <div class="absolute inset-0 flex items-center justify-center">
+          <span class="w-1.5 h-1.5 rounded-full bg-[#C7A873]"></span>
+        </div>
+      </div>
+      
+      <p class="text-[10px] uppercase tracking-[0.2em] text-[#777777] font-bold mb-1">Anfitriones</p>
+      <p class="text-base font-medium text-[#2D2D2D] mb-6 italic" style="font-family: 'Cormorant Garamond', 'Playfair Display', serif;">
+        {{hostName}}
+      </p>
+      
+      <div class="grid grid-cols-2 gap-4 w-full border-t border-b border-[#E9E3DA] py-4 my-2 text-center">
+        <div>
+          <p class="text-[9px] uppercase tracking-wider text-[#777777] font-bold">Fecha</p>
+          <p class="text-sm font-bold text-[#2D2D2D] mt-1">{{date}}</p>
+        </div>
+        <div class="border-l border-[#E9E3DA]">
+          <p class="text-[9px] uppercase tracking-wider text-[#777777] font-bold">Horario</p>
+          <p class="text-sm font-bold text-[#2D2D2D] mt-1">{{time}} Hrs</p>
+        </div>
+      </div>
+
+      <div class="mt-8 flex flex-col items-center animate-bounce">
+        <p class="text-[9px] uppercase tracking-[0.3em] text-[#777777] font-bold">Desliza para descubrir</p>
+        <span class="text-[#C7A873] mt-2 text-sm">↓</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Editorial Story Card -->
+  <div class="w-full max-w-xl bg-white rounded-[32px] p-8 sm:p-12 shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-[#E9E3DA] mb-8 text-center flex flex-col items-center">
+    <span class="text-2xl text-[#C7A873] mb-3">“</span>
+    <p class="text-sm sm:text-base leading-relaxed text-[#2D2D2D] font-light max-w-md italic" style="font-family: 'Cormorant Garamond', serif; font-size: 1.1rem;">
+      {{description}}
+    </p>
+    <span class="text-2xl text-[#C7A873] mt-1">”</span>
+  </div>
+
+  <!-- Countdown Block -->
+  <div class="w-full max-w-xl mb-8">
+    {{countdown}}
+  </div>
+
+  <!-- Confirmation Deadline Banner -->
+  <div class="w-full max-w-xl mb-8">
+    {{confirmationDeadline}}
+  </div>
+
+  <!-- Location details -->
+  <div class="w-full max-w-xl bg-white rounded-[32px] p-8 sm:p-12 shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-[#E9E3DA] mb-8 text-center flex flex-col items-center">
+    <span class="text-[10px] uppercase tracking-[0.25em] text-[#C7A873] font-bold mb-3">Lugar del Evento</span>
+    <h3 class="text-xl sm:text-2xl font-medium text-[#2D2D2D] mb-2" style="font-family: '{{fontTitle}}', serif;">
+      {{locationName}}
+    </h3>
+    <p class="text-xs text-[#777777] font-normal leading-relaxed max-w-xs mb-6">
+      {{locationAddress}}
+    </p>
+    
+    <div class="w-full border-t border-[#E9E3DA] pt-6 mt-2 flex flex-col sm:flex-row gap-3 justify-center items-center">
+      <div class="w-full sm:w-auto">
+        {{maps}}
+      </div>
+      <div class="w-full sm:w-auto">
+        {{waze}}
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule / Timeline -->
+  <div class="w-full max-w-xl mb-8">
+    {{schedule}}
+  </div>
+
+  <!-- Dress Code Section -->
+  <div class="w-full max-w-xl mb-8">
+    {{dressCode}}
+  </div>
+
+  <!-- Spotify Playlist Section -->
+  <div class="w-full max-w-xl mb-8">
+    {{spotify}}
+  </div>
+
+  <!-- Video Section -->
+  <div class="w-full max-w-xl mb-8">
+    {{video}}
+  </div>
+
+  <!-- Gallery Section -->
+  <div class="w-full max-w-xl mb-8">
+    {{gallery}}
+  </div>
+
+  <!-- Gift / Donation Section -->
+  <div class="w-full max-w-xl mb-8">
+    {{giftLink}}
+  </div>
+
+  <!-- RSVP Primary Form Button -->
+  <div class="w-full max-w-xl bg-white rounded-[32px] p-8 sm:p-10 shadow-[0_12px_40px_rgba(199,168,115,0.08)] border border-[#C7A873]/20 mb-8 text-center flex flex-col items-center">
+    <span class="text-[10px] uppercase tracking-[0.3em] text-[#C7A873] font-bold mb-4">Confirmación de Asistencia</span>
+    <h3 class="text-lg sm:text-xl text-[#2D2D2D] font-bold mb-2">¿Nos acompañas en este día especial?</h3>
+    <p class="text-[11px] text-[#777777] mb-6 max-w-xs leading-relaxed">
+      Por favor, confirma tu asistencia a través de nuestro botón oficial de contacto.
+    </p>
+    
+    <a href="https://wa.me/{{whatsappContact}}" target="_blank" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#2D2D2D] hover:bg-[#1E1E1E] text-white text-[10px] font-bold uppercase tracking-[0.2em] px-8 py-4 rounded-full transition-all hover:scale-[1.02] shadow-md">
+      <span>Confirmar vía WhatsApp</span>
+    </a>
+  </div>
+
+  <!-- Footer Signature -->
+  <div class="text-center mt-6 mb-4">
+    <p class="text-[9px] uppercase tracking-[0.3em] text-[#777777] font-bold">Tarjeta Familiar</p>
+    <p class="text-[8px] text-[#C7A873] mt-1 font-mono">EDITORIAL COLLECTION • V1.0</p>
+  </div>
+</div>
