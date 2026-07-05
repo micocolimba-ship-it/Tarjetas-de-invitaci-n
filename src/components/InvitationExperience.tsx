@@ -2,11 +2,45 @@ import React, { useState, useEffect } from 'react';
 import { EventData, CustomTemplate } from '../types';
 import { Sparkles, Mail, Heart, ArrowRight } from 'lucide-react';
 
+export function getDynamicInitials(hostName: string): string {
+  if (!hostName) return 'H&C';
+  
+  // Try splitting by common connectors
+  const connectors = /\s*(?:&| y | and |\+|,)\s*/i;
+  const parts = hostName.split(connectors).map(p => p.trim()).filter(Boolean);
+  
+  if (parts.length >= 2) {
+    // If we have 2 or more distinct hosts split by connector, take first letter of each
+    const initials = parts.map(part => {
+      const words = part.split(/\s+/).filter(w => !['de', 'del', 'la', 'las', 'los', 'y', 'e', 'o', 'u', 'with', 'con'].includes(w.toLowerCase()));
+      return words[0] ? words[0].charAt(0).toUpperCase() : '';
+    }).filter(Boolean);
+    
+    if (initials.length === 2) {
+      return `${initials[0]}&${initials[1]}`;
+    }
+    return initials.slice(0, 3).join('');
+  }
+  
+  // Single host name, e.g., "Abuelito Juan" or "Familia Lavin"
+  const words = hostName.split(/\s+/).filter(w => !['de', 'del', 'la', 'las', 'los', 'y', 'e', 'o', 'u', 'with', 'con'].includes(w.toLowerCase()));
+  if (words.length >= 2) {
+    const i1 = words[0].charAt(0).toUpperCase();
+    const i2 = words[1].charAt(0).toUpperCase();
+    return `${i1}&${i2}`;
+  } else if (words.length === 1 && words[0]) {
+    return words[0].substring(0, 2).toUpperCase();
+  }
+  
+  return 'H&C';
+}
+
 interface InvitationExperienceProps {
   event: EventData;
   imageUrl: string;
   isMobileSize?: boolean;
   customTemplates?: CustomTemplate[];
+  onOpen?: () => void;
   children: React.ReactNode;
 }
 
@@ -15,9 +49,10 @@ export default function InvitationExperience({
   imageUrl,
   isMobileSize = false,
   customTemplates = [],
+  onOpen,
   children
 }: InvitationExperienceProps) {
-  const isEnabled = event.envelopeExperience === 'elegant';
+  const isEnabled = event.envelopeExperience === 'elegant' || (event.musicConfig?.enabled && !!event.musicConfig?.audioUrl);
   const [isOpen, setIsOpen] = useState(false);
   const [animationPhase, setAnimationPhase] = useState<'idle' | 'opening' | 'sliding' | 'fading' | 'opened'>('idle');
 
@@ -32,16 +67,43 @@ export default function InvitationExperience({
   }
 
   // Fallback / default configurations for the envelope
-  const envelopeColor = event.envelopeColor || '#1C2E24'; // Elegant forest green default
-  const envelopeSeal = event.envelopeSeal || 'H&C'; // Initial monogram default
+  const defaultEnvelopeColor = event.style === 'editorial-black-v1' 
+    ? '#161616' 
+    : (event.style === 'editorial-olive-v1' ? '#DCD7CE' : '#FAF8F5');
+  const envelopeColor = event.envelopeColor || defaultEnvelopeColor;
+  const envelopeSeal = event.envelopeSeal || getDynamicInitials(event.hostName); // Initial monogram default
   const guestName = event.guestName || 'Querida Familia y Amigos';
 
+  // Check if the selected color is very light (white, cream, ivory etc.) to adjust contrast
+  const isLightColor = envelopeColor.toLowerCase() === '#faf8f5' || envelopeColor.toLowerCase() === '#ffffff' || envelopeColor.toLowerCase() === '#fff' || envelopeColor.toLowerCase() === '#fcfcfc' || envelopeColor.toLowerCase() === '#dcd7ce' || envelopeColor.toLowerCase() === '#eae5da';
+
   // Extract a sutil darker/lighter version or secondary color
-  const darkerEnvelopeColor = adjustColorBrightness(envelopeColor, -20);
-  const lighterEnvelopeColor = adjustColorBrightness(envelopeColor, 20);
+  const darkerEnvelopeColor = adjustColorBrightness(envelopeColor, isLightColor ? -15 : -20);
+  const lighterEnvelopeColor = adjustColorBrightness(envelopeColor, isLightColor ? 5 : 20);
+
+  // Wax seal styling based on event template style
+  const isOliveStyle = event.style === 'editorial-olive-v1';
+  const sealStyle = isOliveStyle
+    ? {
+        backgroundColor: '#5C6454', // Olive-green wax seal
+        backgroundImage: 'radial-gradient(circle, #717B67 0%, #4B5244 100%)',
+        boxShadow: '0 4px 10px rgba(92, 100, 84, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.2)',
+        borderColor: '#D4AF37' // Golden relief
+      }
+    : {
+        backgroundColor: '#D4AF37', // Gold wax seal
+        backgroundImage: 'radial-gradient(circle, #E6C655 0%, #B8972C 100%)',
+        boxShadow: '0 4px 10px rgba(184, 151, 44, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.4)',
+        borderColor: 'rgba(251, 191, 36, 0.3)'
+      };
 
   const handleOpen = () => {
     if (animationPhase !== 'idle') return;
+
+    // Trigger onOpen immediately on click/user interaction
+    if (onOpen) {
+      onOpen();
+    }
 
     setAnimationPhase('opening');
     setIsOpen(true);
@@ -73,7 +135,7 @@ export default function InvitationExperience({
   return (
     <div 
       className={`relative w-full flex flex-col items-center justify-center overflow-hidden transition-all duration-700 select-none ${
-        isMobileSize ? 'h-full min-h-[650px] rounded-[38px]' : 'min-h-[85vh] py-10 px-4'
+        isMobileSize ? 'min-h-[90vh] py-8 px-3' : 'min-h-[85vh] py-10 px-4'
       } ${
         animationPhase === 'fading' ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100'
       }`}
@@ -97,19 +159,28 @@ export default function InvitationExperience({
         <span 
           className="text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full border mb-3 flex items-center gap-1 shadow-2xs"
           style={{ 
-            color: envelopeColor, 
-            borderColor: `${envelopeColor}30`,
-            backgroundColor: `${envelopeColor}08`
+            color: isLightColor ? '#8C7A5F' : envelopeColor, 
+            borderColor: `${isLightColor ? '#8C7A5F' : envelopeColor}30`,
+            backgroundColor: `${isLightColor ? '#8C7A5F' : envelopeColor}08`
           }}
         >
           <Sparkles className="w-3.5 h-3.5 animate-spin-slow" />
           Invitación Digital Exclusiva
         </span>
-        <h3 className="text-stone-850 font-extrabold text-base sm:text-lg leading-tight tracking-tight">
-          {event.title}
+        <p className="text-[9px] text-stone-400 font-black uppercase tracking-[0.2em] mb-1">
+          Anfitriones
+        </p>
+        <h3 
+          className="text-stone-900 text-[46px] sm:text-[56px] font-normal leading-none select-none px-2 text-center my-2 py-1 notranslate"
+          translate="no"
+          style={{ 
+            fontFamily: '"Great Vibes", "Alex Brush", "Pinyon Script", cursive',
+          }}
+        >
+          {event.hostName}
         </h3>
-        <p className="text-[11px] text-stone-500 font-bold mt-1.5 uppercase tracking-widest">
-          Anfitriones: {event.hostName}
+        <p className="text-[11px] sm:text-xs text-stone-500 font-bold mt-2 uppercase tracking-widest">
+          {event.title}
         </p>
       </div>
 
@@ -137,7 +208,7 @@ export default function InvitationExperience({
             className="absolute inset-x-1.5 bottom-1.5 top-1.5 rounded-xl overflow-hidden shadow-inner flex flex-col items-center justify-center"
             style={{
               backgroundColor: '#FAF8F5',
-              backgroundImage: `radial-gradient(${envelopeColor}15 1px, transparent 1px), radial-gradient(${envelopeColor}15 1px, transparent 1px)`,
+              backgroundImage: `radial-gradient(${isLightColor ? '#8C7A5F' : envelopeColor}15 1px, transparent 1px), radial-gradient(${isLightColor ? '#8C7A5F' : envelopeColor}15 1px, transparent 1px)`,
               backgroundSize: '16px 16px',
               backgroundPosition: '0 0, 8px 8px'
             }}
@@ -173,7 +244,7 @@ export default function InvitationExperience({
               >
                 {event.title}
               </h4>
-              <p className="text-[9px] text-[#8C7A5F] font-bold tracking-widest uppercase">
+              <p className="text-[9px] text-[#8C7A5F] font-bold tracking-widest uppercase notranslate" translate="no">
                 {event.hostName}
               </p>
             </div>
@@ -226,7 +297,7 @@ export default function InvitationExperience({
             className="absolute bottom-6 left-1/2 transform -translate-x-1/2 w-[85%] bg-white/95 border border-stone-200/50 py-2 px-4 rounded-xl text-center shadow-md z-18 transition-all duration-300"
             style={{
               fontFamily: "'Dancing Script', 'Alex Brush', cursive",
-              color: darkerEnvelopeColor
+              color: isLightColor ? '#8C7A5F' : darkerEnvelopeColor
             }}
           >
             <p className="text-[9px] text-stone-400 font-sans tracking-widest uppercase font-bold not-italic mb-0.5">Invitado Especial</p>
@@ -255,22 +326,18 @@ export default function InvitationExperience({
 
               {/* WAX SEAL / EMBOSSED MONOGRAM on the tip of the flap */}
               <div 
-                className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shadow-lg border-2 border-amber-300/30 transition-transform duration-300 ${
+                className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 w-12 h-12 sm:w-[53px] sm:h-[53px] rounded-full flex items-center justify-center shadow-lg border-2 transition-transform duration-300 ${
                   animationPhase === 'idle' ? 'animate-pulse hover:scale-110' : ''
                 }`}
-                style={{
-                  backgroundColor: '#D4AF37', // Gold wax seal
-                  backgroundImage: 'radial-gradient(circle, #E6C655 0%, #B8972C 100%)',
-                  boxShadow: '0 4px 10px rgba(184, 151, 44, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.4)'
-                }}
+                style={sealStyle}
               >
                 {/* Heart, Stars or custom letters */}
                 {envelopeSeal === 'heart' ? (
-                  <Heart className="w-5.5 h-5.5 text-white fill-white/20" />
+                  <Heart className="w-[26px] h-[26px] text-white fill-white/20" />
                 ) : envelopeSeal === 'sparkles' ? (
-                  <Sparkles className="w-5.5 h-5.5 text-white fill-white/20" />
+                  <Sparkles className="w-[26px] h-[26px] text-white fill-white/20" />
                 ) : (
-                  <span className="text-white text-[10px] sm:text-[11px] font-black uppercase tracking-wider font-mono">
+                  <span className="text-white text-[12px] sm:text-[13px] font-black uppercase tracking-wider font-mono">
                     {envelopeSeal.slice(0, 3)}
                   </span>
                 )}

@@ -20,6 +20,7 @@ export interface TemplateConfig {
   fontTitle: string;
   fontBody: string;
   status: 'Borrador' | 'Publicado' | 'Activo';
+  engine?: 'classic' | 'v2' | 'v3';
 }
 
 export interface CustomTemplateVersion {
@@ -30,6 +31,7 @@ export interface CustomTemplateVersion {
   fontTitle: string;
   fontBody: string;
   config: TemplateConfig;
+  engine?: 'classic' | 'v2' | 'v3';
 }
 
 export interface CustomTemplate {
@@ -39,10 +41,17 @@ export interface CustomTemplate {
   category: EventType;
   fontTitle: string; // E.g., "Great Vibes" or "Playfair Display"
   fontBody: string; // E.g., "Montserrat" or "Inter"
-  htmlContent: string; // Raw HTML with Tailwind CSS and {{placeholders}}
+  htmlContent: string; // Raw HTML or JSON with Tailwind CSS and {{placeholders}}
   createdAt: string;
   config?: TemplateConfig;
   versions?: CustomTemplateVersion[];
+  engine?: 'classic' | 'v2' | 'v3';
+}
+
+export interface ScheduleItem {
+  time: string;
+  title: string;
+  description?: string;
 }
 
 export interface EventData {
@@ -57,13 +66,39 @@ export interface EventData {
   locationAddress: string;
   locationMapsUrl?: string; // Optional Google Maps link
   description: string; // Detailed invitation text, dress code, etc.
+  dressCode?: string; // E.g., "Formal / Elegante"
+  dressCodeDescription?: string; // E.g., "Sugerimos traje formal para caballeros y vestido de gala para damas"
   whatsappContact?: string; // To let guests ask questions
   envelopeExperience?: 'none' | 'elegant'; // Opening experience setting
   envelopeColor?: string; // E.g., hex code like "#1c2e24" or "#4a3c31"
   envelopeSeal?: string; // E.g. monogram like "H&C" or icon like "heart", "sparkles"
   guestName?: string; // E.g., "Familia Lavin Arias"
+  googleSheetsUrl?: string; // Optional Google Sheets URL for storing / synchronizing RSVPs
+  googleSheetsId?: string; // ID of the connected Google Sheet
+  googleSheetsName?: string; // Name of the connected Google Sheet
+  googleSheetsToken?: string; // Cache the OAuth access token for background guest saves
+  googleSheetsLastSync?: string; // Timestamp of last RSVP sync
+  musicConfig?: MusicConfig; // New Music Experience Integration
+  schedule?: ScheduleItem[]; // Custom editable itinerary list
+  galleryImages?: string[]; // Custom gallery images for memory album
+  videoUrl?: string; // Custom video URL (YouTube, Vimeo, direct MP4, or Base64 upload)
+  imageUrl?: string; // Stored cover image URL
+  userId?: string; // Optional user association for security & multi-user scoping
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MusicConfig {
+  enabled: boolean;
+  audioUrl?: string; // Stored MP3 source (Base64 data URL, preset, or custom URL)
+  fileName?: string; // Optional name of file
+  songName?: string; // Optional song name
+  artist?: string; // Optional artist
+  initialVolume: number; // 0 to 100
+  autoplayOnOpen: boolean;
+  loop: boolean;
+  showMuteButton: boolean;
+  showReplayButton: boolean;
 }
 
 export interface GuestRSVP {

@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Deny all direct client access. Every read/write goes through the Express
+    // backend, which talks to Firestore via the Admin SDK (firebase-admin),
+    // a trusted server-side credential that is not subject to these rules.
+    // Nothing in the frontend calls Firestore directly (src/lib/firebase.ts only
+    // uses Firebase Auth), so this does not break any existing feature.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

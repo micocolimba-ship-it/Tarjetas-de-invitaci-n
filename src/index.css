@@ -1,10 +1,42 @@
-@import url('https://fonts.googleapis.com/css2?family=Great+Vibes&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Great+Vibes&family=Pinyon+Script&family=Alex+Brush&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-serif-elegant: "Playfair Display", Georgia, serif;
   --font-cursive-romance: "Great Vibes", cursive;
+  --font-cursive-pinyon: "Pinyon Script", cursive;
+  --font-cursive-alex: "Alex Brush", cursive;
   --font-sans-modern: "Outfit", sans-serif;
   --font-sans-tech: "Space Grotesk", sans-serif;
+}
+
+@keyframes music-bar-1 {
+  0%, 100% { height: 4px; }
+  50% { height: 12px; }
+}
+@keyframes music-bar-2 {
+  0%, 100% { height: 14px; }
+  50% { height: 6px; }
+}
+@keyframes music-bar-3 {
+  0%, 100% { height: 6px; }
+  50% { height: 14px; }
+}
+@keyframes music-bar-4 {
+  0%, 100% { height: 10px; }
+  50% { height: 4px; }
+}
+
+.animate-music-bar-1 {
+  animation: music-bar-1 0.8s ease-in-out infinite;
+}
+.animate-music-bar-2 {
+  animation: music-bar-2 0.7s ease-in-out infinite;
+}
+.animate-music-bar-3 {
+  animation: music-bar-3 0.9s ease-in-out infinite;
+}
+.animate-music-bar-4 {
+  animation: music-bar-4 0.65s ease-in-out infinite;
 }
 

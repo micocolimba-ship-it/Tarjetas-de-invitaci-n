@@ -170,6 +170,7 @@ export default function AdminPanel({
   const [fontBody, setFontBody] = useState('Inter');
   const [htmlContent, setHtmlContent] = useState(DEFAULT_SAMPLE_HTML);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [engine, setEngine] = useState<'classic' | 'v2'>('classic');
 
   // Advanced Config State (Request 9)
   const [author, setAuthor] = useState('Administrador');
@@ -204,6 +205,7 @@ export default function AdminPanel({
     setFontTitle(t.fontTitle);
     setFontBody(t.fontBody);
     setHtmlContent(t.htmlContent);
+    setEngine(t.engine || 'classic');
 
     if (t.config) {
       setAuthor(t.config.author || 'Administrador');
@@ -233,6 +235,7 @@ export default function AdminPanel({
     setVersion('1.0.0');
     setTags('boda, elegante, premium');
     setStatus('Publicado');
+    setEngine('classic');
     setAiError('');
     setAiSuccess('');
   };
@@ -258,6 +261,7 @@ export default function AdminPanel({
             htmlContent: existing.htmlContent,
             fontTitle: existing.fontTitle,
             fontBody: existing.fontBody,
+            engine: existing.engine || 'classic',
             config: existing.config || {
               name: existing.name,
               category: existing.category,
@@ -269,7 +273,8 @@ export default function AdminPanel({
               variablesUsed: detectVariables(existing.htmlContent),
               fontTitle: existing.fontTitle,
               fontBody: existing.fontBody,
-              status: 'Publicado'
+              status: 'Publicado',
+              engine: existing.engine || 'classic'
             }
           },
           ...updatedVersions
@@ -288,7 +293,8 @@ export default function AdminPanel({
       variablesUsed: currentVariables,
       fontTitle,
       fontBody,
-      status
+      status,
+      engine
     };
 
     const newTemplate: CustomTemplate = {
@@ -301,7 +307,8 @@ export default function AdminPanel({
       htmlContent,
       createdAt: editingId ? (existing?.createdAt || new Date().toISOString()) : new Date().toISOString(),
       config: configObj,
-      versions: updatedVersions
+      versions: updatedVersions,
+      engine
     };
 
     onSaveTemplate(newTemplate);
@@ -707,16 +714,34 @@ export default function AdminPanel({
 
               </div>
 
-              {/* Description */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs text-stone-600 font-extrabold uppercase">Breve Descripción / Detalles</label>
-                <input
-                  type="text"
-                  placeholder="Ej. Estilo sagrado y refinado con flores blancas, ideal para bautizos o confirmaciones."
-                  value={templateDesc}
-                  onChange={(e) => setTemplateDesc(e.target.value)}
-                  className="bg-[#FAF8F5] border border-[#DCD5C9] text-xs text-stone-850 rounded-xl p-3 focus:outline-none focus:border-emerald-600"
-                />
+              {/* Description and Engine Selector */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                
+                {/* Description */}
+                <div className="flex flex-col gap-1.5 sm:col-span-2">
+                  <label className="text-xs text-stone-600 font-extrabold uppercase">Breve Descripción / Detalles</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Estilo sagrado y refinado con flores blancas, ideal para bautizos o confirmaciones."
+                    value={templateDesc}
+                    onChange={(e) => setTemplateDesc(e.target.value)}
+                    className="bg-[#FAF8F5] border border-[#DCD5C9] text-xs text-stone-850 rounded-xl p-3 focus:outline-none focus:border-emerald-600 w-full"
+                  />
+                </div>
+
+                {/* Engine Selector */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-stone-600 font-extrabold uppercase">Motor de Renderizado</label>
+                  <select
+                    value={engine}
+                    onChange={(e) => setEngine(e.target.value as 'classic' | 'v2')}
+                    className="bg-[#FAF8F5] border border-[#DCD5C9] text-xs text-stone-850 rounded-xl p-3 focus:outline-none focus:border-emerald-600 font-bold"
+                  >
+                    <option value="classic">Classic Engine (HTML/CSS)</option>
+                    <option value="v2">Editorial Engine V2 (Premium)</option>
+                  </select>
+                </div>
+
               </div>
 
               {/* Font settings */}
@@ -970,6 +995,15 @@ export default function AdminPanel({
                             {t.config?.version && (
                               <span className="text-[9px] bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-mono font-bold">
                                 v{t.config.version}
+                              </span>
+                            )}
+                            {t.engine === 'v2' ? (
+                              <span className="text-[9px] bg-amber-50 border border-amber-200 text-amber-700 px-2 py-0.5 rounded-full font-bold">
+                                Editorial V2
+                              </span>
+                            ) : (
+                              <span className="text-[9px] bg-stone-100 border border-stone-200 text-stone-500 px-2 py-0.5 rounded-full font-bold">
+                                Classic
                               </span>
                             )}
                           </div>

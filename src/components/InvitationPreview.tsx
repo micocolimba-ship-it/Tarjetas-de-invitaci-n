@@ -1,8 +1,12 @@
-import React from 'react';
-import { Calendar, MapPin, MessageSquare, Heart } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Calendar, MapPin, MessageSquare, Heart, Volume2, VolumeX, RotateCcw, Play, Pause } from 'lucide-react';
 import { EventData, TemplateStyle, CustomTemplate } from '../types';
 import { TEMPLATE_STYLES, EVENT_TYPES_METADATA } from '../data/templates';
 import InvitationExperience from './InvitationExperience';
+import { getAudioFileUrl } from '../utils/audioStorage';
+import { EditorialEngineV2Renderer } from './EditorialEngineV2';
+import { LayoutEngineV3 } from './v3/LayoutEngineV3';
+import PassportInvitation from './PassportInvitation';
 
 interface InvitationPreviewProps {
   event: EventData;
@@ -11,13 +15,420 @@ interface InvitationPreviewProps {
   customTemplates?: CustomTemplate[];
 }
 
+// Helper to transform Google Drive and Dropbox URLs into raw streaming URLs
+function getDirectAudioUrl(url: string | null): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+
+  // Match Google Drive share links
+  // e.g., https://drive.google.com/file/d/1-k710_itVwkm8j9UAlKSt6doaNtqR1vN/view?usp=sharing
+  // e.g., https://drive.google.com/open?id=1-k710_itVwkm8j9UAlKSt6doaNtqR1vN
+  // e.g., https://docs.google.com/file/d/1-k710_itVwkm8j9UAlKSt6doaNtqR1vN/edit
+  const driveRegex = /(?:drive\.google\.com\/(?:file\/d\/|open\?id=)|docs\.google\.com\/file\/d\/)([a-zA-Z0-9_-]+)/;
+  const driveMatch = trimmed.match(driveRegex);
+  if (driveMatch && driveMatch[1]) {
+    return `https://docs.google.com/uc?export=download&id=${driveMatch[1]}`;
+  }
+
+  // Match Dropbox preview links and convert dl=0 to raw=1
+  if (trimmed.includes('dropbox.com') && trimmed.includes('dl=0')) {
+    return trimmed.replace('dl=0', 'raw=1');
+  }
+
+  return trimmed;
+}
+
 export default function InvitationPreview({ 
   event, 
-  imageUrl, 
+  imageUrl: passedImageUrl, 
   isMobileSize = false,
   customTemplates = []
 }: InvitationPreviewProps) {
+  const imageUrl = event.imageUrl || passedImageUrl || (event.galleryImages && event.galleryImages.length > 0 ? event.galleryImages[0] : '');
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [envelopeOpened, setEnvelopeOpened] = useState<boolean>(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const updateCountdownDOM = () => {
+      const eventDateMs = new Date((event.date || '2026-12-31') + 'T' + (event.time || '19:30') + ':00').getTime();
+      const nowMs = Date.now();
+      const diffMs = eventDateMs - nowMs;
+      
+      let days = 0, hours = 0, minutes = 0, seconds = 0;
+      if (diffMs > 0) {
+        days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+        seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+      } else {
+        days = 12; hours = 14; minutes = 45; seconds = 30; // Default static values
+      }
+
+      const daysEl = document.querySelectorAll('#countdown-days');
+      const hoursEl = document.querySelectorAll('#countdown-hours');
+      const minsEl = document.querySelectorAll('#countdown-minutes');
+      const secsEl = document.querySelectorAll('#countdown-seconds');
+
+      daysEl.forEach(el => { if (el.textContent !== String(days)) el.textContent = String(days); });
+      hoursEl.forEach(el => { if (el.textContent !== String(hours)) el.textContent = String(hours); });
+      minsEl.forEach(el => { if (el.textContent !== String(minutes)) el.textContent = String(minutes); });
+      secsEl.forEach(el => { if (el.textContent !== String(seconds)) el.textContent = String(seconds); });
+    };
+
+    updateCountdownDOM();
+    const interval = setInterval(updateCountdownDOM, 1000);
+    return () => clearInterval(interval);
+  }, [event.date, event.time]);
+
+  useEffect(() => {
+    const isEnvelopeActive = event.envelopeExperience === 'elegant' || (event.musicConfig?.enabled && !!event.musicConfig?.audioUrl);
+    setEnvelopeOpened(!isEnvelopeActive);
+  }, [event.id, event.envelopeExperience, event.musicConfig?.enabled, event.musicConfig?.audioUrl]);
+
+  useEffect(() => {
+    let active = true;
+    let cleanupInteractListeners: (() => void) | null = null;
+    
+    const loadAudio = async () => {
+      if (!event.musicConfig?.enabled) {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
+        setIsPlaying(false);
+        setAudioUrl(null);
+        return;
+      }
+
+      let url = event.musicConfig?.audioUrl || null;
+
+      // 1. Synchronous instantiation for direct URL configurations.
+      // This is crucial to avoid any microtask delays (via await) that break the browser's
+      // user gesture requirement for playing audio inside the click event call stack!
+      if (url) {
+        const directUrl = getDirectAudioUrl(url);
+        if (directUrl && (!audioRef.current || audioUrl !== directUrl)) {
+          setAudioUrl(directUrl);
+          if (audioRef.current) {
+            audioRef.current.pause();
+          }
+
+          const audio = new Audio(directUrl);
+          audio.preload = "auto";
+          audio.volume = (event.musicConfig?.initialVolume ?? 80) / 100;
+          audio.loop = event.musicConfig?.loop ?? true;
+          audio.muted = isMuted;
+          audioRef.current = audio;
+
+          audio.onended = () => {
+            setIsPlaying(false);
+          };
+        }
+      }
+
+      // 2. Asynchronous fallback if we need to retrieve it from IndexedDB
+      if (!url) {
+        const dbUrl = await getAudioFileUrl(event.id);
+        if (dbUrl && active) {
+          const directUrl = getDirectAudioUrl(dbUrl);
+          if (directUrl && (!audioRef.current || audioUrl !== directUrl)) {
+            setAudioUrl(directUrl);
+            if (audioRef.current) {
+              audioRef.current.pause();
+            }
+
+            const audio = new Audio(directUrl);
+            audio.preload = "auto";
+            audio.volume = (event.musicConfig?.initialVolume ?? 80) / 100;
+            audio.loop = event.musicConfig?.loop ?? true;
+            audio.muted = isMuted;
+            audioRef.current = audio;
+
+            audio.onended = () => {
+              setIsPlaying(false);
+            };
+          }
+        }
+      }
+
+      if (!active || !audioRef.current) return;
+
+      // Always try to autoplay on first user interaction anywhere on the document (click or tap)
+      // for absolute bulletproof playback across all templates and devices.
+      if (event.musicConfig?.autoplayOnOpen) {
+        const handleInteraction = (e: Event) => {
+          // Avoid triggering play if user clicked specifically on a mute/unmute control button
+          const target = e.target as HTMLElement | null;
+          if (target && target.closest('button')) {
+            const btnTitle = target.closest('button')?.getAttribute('title')?.toLowerCase() || '';
+            if (
+              btnTitle.includes('silenciar') || 
+              btnTitle.includes('reproducir') || 
+              btnTitle.includes('pausar') || 
+              btnTitle.includes('escuchar') ||
+              btnTitle.includes('mute') || 
+              btnTitle.includes('play')
+            ) {
+              return;
+            }
+          }
+          
+          if (audioRef.current && !isPlaying) {
+            audioRef.current.play()
+              .then(() => {
+                setIsPlaying(true);
+              })
+              .catch(err => console.log('Autoplay blocked on interaction:', err));
+          }
+          document.removeEventListener('click', handleInteraction);
+          document.removeEventListener('touchstart', handleInteraction);
+        };
+
+        document.addEventListener('click', handleInteraction);
+        document.addEventListener('touchstart', handleInteraction);
+
+        cleanupInteractListeners = () => {
+          document.removeEventListener('click', handleInteraction);
+          document.removeEventListener('touchstart', handleInteraction);
+        };
+      }
+    };
+
+    loadAudio();
+
+    return () => {
+      active = false;
+      if (cleanupInteractListeners) {
+        cleanupInteractListeners();
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, [event.id, event.musicConfig?.enabled, event.musicConfig?.audioUrl, event.musicConfig?.initialVolume, event.musicConfig?.loop, event.envelopeExperience]);
+
+  // Bulletproof Synchronized Autoplay: Plays audio as soon as BOTH the audio is ready/loaded and the envelope is opened
+  useEffect(() => {
+    let active = true;
+    if (envelopeOpened && audioRef.current && event.musicConfig?.enabled && event.musicConfig?.autoplayOnOpen && !isPlaying) {
+      audioRef.current.play()
+        .then(() => {
+          if (active) setIsPlaying(true);
+        })
+        .catch(err => {
+          console.log('Playback deferred till user interaction:', err);
+          // Standard fallback: try to play on next click anywhere
+          const playOnInteract = () => {
+            if (audioRef.current && envelopeOpened && event.musicConfig?.enabled && !isPlaying) {
+              audioRef.current.play()
+                .then(() => {
+                  if (active) setIsPlaying(true);
+                  document.removeEventListener('click', playOnInteract);
+                })
+                .catch(e => console.log('Interactive play blocked:', e));
+            }
+          };
+          document.addEventListener('click', playOnInteract);
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [envelopeOpened, audioUrl, event.musicConfig?.enabled, event.musicConfig?.autoplayOnOpen, isPlaying]);
+
+  const handleEnvelopeOpen = () => {
+    setEnvelopeOpened(true);
+    
+    if (event.musicConfig?.enabled) {
+      // 1. Determine the best available URL (either pre-loaded audioUrl state or direct musicConfig URL)
+      let targetUrl = audioUrl;
+      if (!targetUrl && event.musicConfig?.audioUrl) {
+        targetUrl = getDirectAudioUrl(event.musicConfig.audioUrl);
+      }
+
+      // 2. Synchronously re-instantiate the Audio object inside this click handler stack!
+      // This is the bulletproof technique to satisfy strict browser user-gesture requirements.
+      if (targetUrl) {
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+
+        const audio = new Audio(targetUrl);
+        audio.preload = "auto";
+        audio.volume = (event.musicConfig?.initialVolume ?? 80) / 100;
+        audio.loop = event.musicConfig?.loop ?? true;
+        audio.muted = isMuted;
+        audioRef.current = audio;
+
+        audio.onended = () => {
+          setIsPlaying(false);
+        };
+
+        setAudioUrl(targetUrl);
+      }
+    }
+
+    if (audioRef.current && event.musicConfig?.enabled) {
+      audioRef.current.muted = isMuted;
+      audioRef.current.volume = (event.musicConfig?.initialVolume ?? 80) / 100;
+      audioRef.current.play()
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch(err => {
+          console.error('Audio play failed on envelope open:', err);
+        });
+    }
+  };
+
+  const renderControls = () => {
+    if (!event.musicConfig?.enabled) return null;
+    return (
+      <div className="absolute bottom-6 right-6 z-50 flex items-center gap-2 bg-white/95 backdrop-blur-md px-3 py-2 rounded-full shadow-[0_4px_15px_rgba(0,0,0,0.1)] border border-[#E9E3DA]">
+        {isPlaying && !isMuted && (
+          <div className="flex items-center gap-0.5 h-3 px-1.5">
+            <span className="w-0.5 h-2 bg-[#8C7A5F] rounded-full animate-pulse" />
+            <span className="w-0.5 h-3 bg-[#8C7A5F] rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
+            <span className="w-0.5 h-1.5 bg-[#8C7A5F] rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
+          </div>
+        )}
+        
+        {(event.musicConfig.songName || event.musicConfig.artist) && (
+          <div className="text-left max-w-[120px] pr-2 border-r border-[#EBE5DA] hidden sm:block">
+            <p className="text-[10px] font-bold text-stone-850 truncate leading-none">
+              {event.musicConfig.songName || 'Canción del Evento'}
+            </p>
+            {event.musicConfig.artist && (
+              <p className="text-[8px] text-stone-400 truncate leading-none mt-1">
+                {event.musicConfig.artist}
+              </p>
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={() => {
+            if (!audioRef.current) return;
+            if (isPlaying) {
+              audioRef.current.pause();
+              setIsPlaying(false);
+            } else {
+              audioRef.current.play().then(() => setIsPlaying(true));
+            }
+          }}
+          className="p-1.5 hover:bg-[#FAF8F5] rounded-full text-stone-600 hover:text-stone-900 transition-colors"
+          title={isPlaying ? "Pausar" : "Reproducir"}
+        >
+          {isPlaying ? <Pause className="w-3.5 h-3.5 text-stone-800" /> : <Play className="w-3.5 h-3.5 text-stone-800" />}
+        </button>
+
+        {event.musicConfig.showMuteButton !== false && (
+          <button
+            onClick={() => {
+              if (!audioRef.current) return;
+              const newMute = !isMuted;
+              audioRef.current.muted = newMute;
+              setIsMuted(newMute);
+            }}
+            className="p-1.5 hover:bg-[#FAF8F5] rounded-full text-stone-600 hover:text-stone-900 transition-colors"
+            title={isMuted ? "Activar sonido" : "Silenciar"}
+          >
+            {isMuted ? <VolumeX className="w-3.5 h-3.5 text-stone-400" /> : <Volume2 className="w-3.5 h-3.5 text-[#8C7A5F]" />}
+          </button>
+        )}
+
+        {event.musicConfig.showReplayButton !== false && (
+          <button
+            onClick={() => {
+              if (!audioRef.current) return;
+              audioRef.current.currentTime = 0;
+              if (!isPlaying) {
+                audioRef.current.play().then(() => setIsPlaying(true));
+              }
+            }}
+            className="p-1.5 hover:bg-[#FAF8F5] rounded-full text-stone-600 hover:text-stone-900 transition-colors"
+            title="Reiniciar canción"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-stone-500 hover:text-stone-850" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderFloatingMusicButton = () => {
+    const hasMusic = event.musicConfig?.enabled && !!event.musicConfig?.audioUrl;
+    if (!hasMusic || !envelopeOpened) return null;
+
+    return (
+      <div className="fixed bottom-5 right-5 sm:bottom-8 sm:right-8 z-[9999] flex items-center gap-3 group">
+        {/* Hover info badge (slides out) */}
+        <div className="bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-[#E9E3DA] shadow-lg max-w-[160px] text-left opacity-0 translate-x-2 pointer-events-none group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 hidden md:block">
+          <p className="text-[10px] font-extrabold text-stone-850 truncate leading-none">
+            {event.musicConfig?.songName || 'Música de la Invitación'}
+          </p>
+          <p className="text-[8px] text-stone-400 font-bold truncate leading-none mt-1">
+            {event.musicConfig?.artist || 'Instrumental'}
+          </p>
+        </div>
+
+        {/* Floating action button */}
+        <button
+          onClick={() => {
+            if (!audioRef.current) return;
+            const newMute = !isMuted;
+            audioRef.current.muted = newMute;
+            setIsMuted(newMute);
+          }}
+          className={`relative w-12 h-12 rounded-full flex items-center justify-center border transition-all duration-300 shadow-xl ${
+            isMuted 
+              ? 'bg-[#FAF8F5] border-stone-200 text-stone-400' 
+              : 'bg-white border-[#E9E3DA] text-[#8C7A5F] scale-100 hover:scale-105 hover:shadow-2xl'
+          }`}
+          title={isMuted ? "Activar música" : "Silenciar música"}
+        >
+          {/* Circular progress or pulse ring when playing */}
+          {isPlaying && !isMuted && (
+            <span className="absolute inset-0 rounded-full border border-[#8C7A5F]/40 animate-ping opacity-75" />
+          )}
+
+          {/* Sound wave animations */}
+          {isPlaying && !isMuted ? (
+            <div className="flex items-end gap-0.5 h-3.5 mb-0.5 mr-0.5">
+              <span className="w-0.5 bg-[#8C7A5F] rounded-full animate-music-bar-1" style={{ height: '8px' }} />
+              <span className="w-0.5 bg-[#8C7A5F] rounded-full animate-music-bar-2" style={{ height: '14px' }} />
+              <span className="w-0.5 bg-[#8C7A5F] rounded-full animate-music-bar-3" style={{ height: '6px' }} />
+              <span className="w-0.5 bg-[#8C7A5F] rounded-full animate-music-bar-4" style={{ height: '11px' }} />
+            </div>
+          ) : (
+            isMuted ? <VolumeX className="w-5 h-5 text-stone-400" /> : <Volume2 className="w-5 h-5 text-[#8C7A5F]" />
+          )}
+        </button>
+      </div>
+    );
+  };
+
   const customTemplate = customTemplates.find(t => t.id === event.style);
+
+  if (customTemplate && customTemplate.id === 'editorial-passport-v1') {
+    return (
+      <div className="relative w-full h-full">
+        <PassportInvitation
+          event={event}
+          imageUrl={imageUrl}
+          isMobileSize={!!isMobileSize}
+          customTemplates={customTemplates}
+          onOpen={handleEnvelopeOpen}
+        />
+        {renderControls()}
+        {renderFloatingMusicButton()}
+      </div>
+    );
+  }
 
   if (customTemplate) {
     const formattedDate = new Date(event.date + 'T00:00:00').toLocaleDateString('es-ES', { 
@@ -43,23 +454,23 @@ export default function InvitationPreview({
 
     // Extended Widgets Definitions
     const widgetCountdown = `
-      <div class="my-6 p-5 sm:p-6 bg-stone-50 border border-stone-200/80 rounded-3xl text-center max-w-md mx-auto shadow-sm">
+      <div class="my-6 p-5 sm:p-6 bg-stone-50 border border-stone-200/80 rounded-3xl text-center max-w-md mx-auto shadow-sm notranslate" translate="no">
         <p class="text-[10px] tracking-widest uppercase text-stone-500 font-extrabold mb-3 flex items-center justify-center gap-1">⏱️ CUENTA REGRESIVA</p>
         <div class="grid grid-cols-4 gap-2 text-stone-800">
           <div class="bg-white p-2.5 sm:p-3 rounded-2xl border border-stone-100 flex flex-col items-center shadow-2xs">
-            <span class="text-xl sm:text-2xl font-black text-stone-850">${days}</span>
+            <span class="text-xl sm:text-2xl font-mono tabular-nums font-black text-stone-850" id="countdown-days">${days}</span>
             <span class="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Días</span>
           </div>
           <div class="bg-white p-2.5 sm:p-3 rounded-2xl border border-stone-100 flex flex-col items-center shadow-2xs">
-            <span class="text-xl sm:text-2xl font-black text-stone-850">${hours}</span>
+            <span class="text-xl sm:text-2xl font-mono tabular-nums font-black text-stone-850" id="countdown-hours">${hours}</span>
             <span class="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Hrs</span>
           </div>
           <div class="bg-white p-2.5 sm:p-3 rounded-2xl border border-stone-100 flex flex-col items-center shadow-2xs">
-            <span class="text-xl sm:text-2xl font-black text-stone-850">${minutes}</span>
+            <span class="text-xl sm:text-2xl font-mono tabular-nums font-black text-stone-850" id="countdown-minutes">${minutes}</span>
             <span class="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Min</span>
           </div>
           <div class="bg-white p-2.5 sm:p-3 rounded-2xl border border-stone-100 flex flex-col items-center shadow-2xs">
-            <span class="text-xl sm:text-2xl font-black text-stone-850">${seconds}</span>
+            <span class="text-xl sm:text-2xl font-mono tabular-nums font-black text-stone-850" id="countdown-seconds">${seconds}</span>
             <span class="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Seg</span>
           </div>
         </div>
@@ -80,32 +491,78 @@ export default function InvitationPreview({
       </div>
     `;
 
+    const defaultGallery = [
+      "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=300",
+      "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&q=80&w=300",
+      "https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&q=80&w=300"
+    ];
+    const userGalleryImages = event.galleryImages && event.galleryImages.length > 0 ? event.galleryImages : defaultGallery;
+
     const widgetGallery = `
       <div class="my-8">
         <p class="text-[10px] tracking-widest uppercase text-stone-500 font-extrabold text-center mb-4">📸 ÁLBUM DE FOTOS DEL RECUERDO</p>
         <div class="grid grid-cols-3 gap-2">
           <div class="rounded-2xl overflow-hidden aspect-square border border-stone-100 shadow-2xs">
-            <img src="https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=300" class="w-full h-full object-cover transform hover:scale-105 transition-transform duration-500" />
+            <img src="${userGalleryImages[0] || defaultGallery[0]}" class="w-full h-full object-cover transform hover:scale-105 transition-transform duration-500" />
           </div>
           <div class="rounded-2xl overflow-hidden aspect-square border border-stone-100 shadow-2xs">
-            <img src="https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&q=80&w=300" class="w-full h-full object-cover transform hover:scale-105 transition-transform duration-500" />
+            <img src="${userGalleryImages[1] || defaultGallery[1]}" class="w-full h-full object-cover transform hover:scale-105 transition-transform duration-500" />
           </div>
           <div class="rounded-2xl overflow-hidden aspect-square border border-stone-100 shadow-2xs">
-            <img src="https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&q=80&w=300" class="w-full h-full object-cover transform hover:scale-105 transition-transform duration-500" />
+            <img src="${userGalleryImages[2] || defaultGallery[2]}" class="w-full h-full object-cover transform hover:scale-105 transition-transform duration-500" />
           </div>
         </div>
       </div>
     `;
 
-    const widgetVideo = `
-      <div class="my-6 rounded-3xl overflow-hidden shadow-lg aspect-video border border-stone-200 bg-stone-100 relative group flex items-center justify-center">
-        <img src="https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&q=80&w=800" class="absolute inset-0 w-full h-full object-cover opacity-80" />
-        <div class="absolute inset-0 bg-stone-950/20 group-hover:bg-stone-950/35 transition-all"></div>
-        <div class="relative z-10 w-12 h-12 bg-white rounded-full flex items-center justify-center text-stone-950 shadow-lg group-hover:scale-110 transition-transform duration-300 cursor-pointer">
-          <span class="text-xs ml-0.5">▶</span>
+    const userVideoUrl = event.videoUrl || '';
+    let widgetVideo = '';
+
+    if (userVideoUrl) {
+      // Check if it's a YouTube URL (either watch, share, or embed link)
+      let youtubeEmbedUrl = '';
+      if (userVideoUrl.includes('youtube.com') || userVideoUrl.includes('youtu.be')) {
+        let videoId = '';
+        if (userVideoUrl.includes('youtu.be/')) {
+          videoId = userVideoUrl.split('youtu.be/')[1]?.split('?')[0];
+        } else if (userVideoUrl.includes('embed/')) {
+          videoId = userVideoUrl.split('embed/')[1]?.split('?')[0];
+        } else if (userVideoUrl.includes('v=')) {
+          videoId = userVideoUrl.split('v=')[1]?.split('&')[0];
+        }
+        if (videoId) {
+          youtubeEmbedUrl = `https://www.youtube.com/embed/${videoId}`;
+        }
+      }
+
+      if (youtubeEmbedUrl) {
+        widgetVideo = `
+          <div class="my-6 rounded-3xl overflow-hidden shadow-lg aspect-video border border-stone-200 bg-stone-100 relative">
+            <iframe class="w-full h-full" src="${youtubeEmbedUrl}" title="Video del Evento" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+          </div>
+        `;
+      } else {
+        // Render a native video player for MP4 / uploaded video or other direct video links
+        widgetVideo = `
+          <div class="my-6 rounded-3xl overflow-hidden shadow-lg aspect-video border border-stone-200 bg-stone-950 relative">
+            <video class="w-full h-full object-cover" controls playsinline>
+              <source src="${userVideoUrl}">
+              Su navegador no soporta reproducción de video.
+            </video>
+          </div>
+        `;
+      }
+    } else {
+      widgetVideo = `
+        <div class="my-6 rounded-3xl overflow-hidden shadow-lg aspect-video border border-stone-200 bg-stone-100 relative group flex items-center justify-center">
+          <img src="https://images.unsplash.com/photo-1465495976277-4387d4b0b4c6?auto=format&fit=crop&q=80&w=800" class="absolute inset-0 w-full h-full object-cover opacity-80" />
+          <div class="absolute inset-0 bg-stone-950/20 group-hover:bg-stone-950/35 transition-all"></div>
+          <div class="relative z-10 w-12 h-12 bg-white rounded-full flex items-center justify-center text-stone-950 shadow-lg group-hover:scale-110 transition-transform duration-300 cursor-pointer">
+            <span class="text-xs ml-0.5">▶</span>
+          </div>
         </div>
-      </div>
-    `;
+      `;
+    }
 
     const widgetGiftLink = `
       <div class="my-6 p-6 border border-stone-200/80 rounded-3xl bg-stone-50/50 text-center max-w-md mx-auto shadow-xs">
@@ -120,14 +577,27 @@ export default function InvitationPreview({
       </div>
     `;
 
+    const destinationParts = [];
+    if (event.locationName) destinationParts.push(event.locationName);
+    if (event.locationAddress) destinationParts.push(event.locationAddress);
+    const destinationQuery = destinationParts.join(', ').trim();
+
+    const computedMapsUrl = destinationQuery 
+      ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destinationQuery)}`
+      : (event.locationMapsUrl || 'https://maps.google.com');
+
+    const computedWazeUrl = destinationQuery
+      ? `https://waze.com/ul?q=${encodeURIComponent(destinationQuery)}&navigate=yes`
+      : 'https://waze.com';
+
     const widgetMaps = `
-      <a href="https://maps.google.com" target="_blank" class="my-2 inline-flex items-center gap-2 bg-[#4285F4] hover:bg-[#357ae8] text-white text-[10px] font-extrabold px-4.5 py-2.5 rounded-full transition-all shadow-2xs tracking-wider uppercase">
+      <a href="${computedMapsUrl}" target="_blank" class="my-2 inline-flex items-center gap-2 bg-[#4285F4] hover:bg-[#357ae8] text-white text-[10px] font-extrabold px-4.5 py-2.5 rounded-full transition-all shadow-2xs tracking-wider uppercase">
         📍 Abrir en Google Maps
       </a>
     `;
 
     const widgetWaze = `
-      <a href="https://waze.com" target="_blank" class="my-2 inline-flex items-center gap-2 bg-[#33CCFF] hover:bg-[#2bbfe6] text-stone-900 text-[10px] font-extrabold px-4.5 py-2.5 rounded-full transition-all shadow-2xs tracking-wider uppercase">
+      <a href="${computedWazeUrl}" target="_blank" class="my-2 inline-flex items-center gap-2 bg-[#33CCFF] hover:bg-[#2bbfe6] text-stone-900 text-[10px] font-extrabold px-4.5 py-2.5 rounded-full transition-all shadow-2xs tracking-wider uppercase">
         🚗 Navegar con Waze
       </a>
     `;
@@ -152,8 +622,8 @@ export default function InvitationPreview({
       <div class="my-6 p-5 border border-stone-200/60 rounded-3xl bg-white max-w-sm mx-auto text-center shadow-2xs">
         <span class="text-2xl">🤵👗</span>
         <h4 class="text-xs font-black text-stone-800 uppercase tracking-wider mt-2">Código de Vestimenta</h4>
-        <p class="text-xs text-stone-700 mt-1 font-bold">Formal / Elegante</p>
-        <p class="text-[10px] text-stone-400 mt-1 leading-relaxed">Te sugerimos traje formal para caballeros y vestido de fiesta para damas.</p>
+        <p class="text-xs text-stone-700 mt-1 font-bold">${event.dressCode || 'Formal / Elegante'}</p>
+        <p class="text-[10px] text-stone-400 mt-1 leading-relaxed">${event.dressCodeDescription || 'Te sugerimos traje formal para caballeros y vestido de fiesta para damas.'}</p>
       </div>
     `;
 
@@ -173,31 +643,27 @@ export default function InvitationPreview({
       </div>
     `;
 
+    const scheduleItems = event.schedule && event.schedule.length > 0
+      ? event.schedule
+      : [
+          { time: "19:30", title: "Cóctel de Recepción", description: "Llegada de invitados y brindis inicial." },
+          { time: "20:30", title: "Ceremonia Central", description: "Momento simbólico de celebración." },
+          { time: "22:00", title: "Banquete y Fiesta", description: "Cena, baile y sorpresas de la noche." }
+        ];
+
     const widgetSchedule = `
       <div class="my-8 text-left max-w-sm mx-auto p-5 bg-white border border-stone-200/60 rounded-3xl shadow-2xs">
         <h4 class="text-[10px] font-black uppercase text-stone-500 tracking-widest text-center mb-4">📅 CRONOGRAMA DEL EVENTO</h4>
         <div class="flex flex-col gap-4 relative before:absolute before:left-2 before:top-1 before:bottom-1 before:w-[1px] before:bg-stone-200">
-          <div class="flex gap-3 pl-6 relative">
-            <span class="absolute left-0.5 top-1.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white shadow-2xs"></span>
-            <div>
-              <strong class="text-xs text-stone-850 font-extrabold">19:30 - Cóctel de Recepción</strong>
-              <p class="text-[10px] text-stone-400 mt-0.5 font-medium leading-relaxed">Llegada de invitados y brindis inicial.</p>
+          ${scheduleItems.map((it, idx) => `
+            <div class="flex gap-3 pl-6 relative">
+              <span class="absolute left-0.5 top-1.5 w-3 h-3 rounded-full ${idx === 0 ? 'bg-emerald-500' : 'bg-stone-300'} border-2 border-white shadow-2xs"></span>
+              <div>
+                <strong class="text-xs text-stone-850 font-extrabold">${it.time} - ${it.title}</strong>
+                ${it.description ? `<p class="text-[10px] text-stone-400 mt-0.5 font-medium leading-relaxed">${it.description}</p>` : ''}
+              </div>
             </div>
-          </div>
-          <div class="flex gap-3 pl-6 relative">
-            <span class="absolute left-0.5 top-1.5 w-3 h-3 rounded-full bg-stone-300 border-2 border-white shadow-2xs"></span>
-            <div>
-              <strong class="text-xs text-stone-850 font-extrabold">20:30 - Ceremonia Central</strong>
-              <p class="text-[10px] text-stone-400 mt-0.5 font-medium leading-relaxed">Momento simbólico de celebración.</p>
-            </div>
-          </div>
-          <div class="flex gap-3 pl-6 relative">
-            <span class="absolute left-0.5 top-1.5 w-3 h-3 rounded-full bg-stone-300 border-2 border-white shadow-2xs"></span>
-            <div>
-              <strong class="text-xs text-stone-850 font-extrabold">22:00 - Banquete y Fiesta</strong>
-              <p class="text-[10px] text-stone-400 mt-0.5 font-medium leading-relaxed">Cena, baile y sorpresas de la noche.</p>
-            </div>
-          </div>
+          `).join('')}
         </div>
       </div>
     `;
@@ -231,7 +697,7 @@ export default function InvitationPreview({
     `;
 
     const widgetDeadline = `
-      <div class="my-4 p-3.5 bg-rose-50 border border-rose-150 rounded-2xl text-center max-w-sm mx-auto text-[10px] text-rose-700 font-black tracking-wide flex items-center justify-center gap-2 shadow-3xs">
+      <div class="my-4 p-3.5 bg-rose-50 border border-rose-150 rounded-2xl text-center max-w-sm mx-auto text-[10px] text-rose-700 font-black tracking-wide flex items-center justify-center gap-2 shadow-3xs notranslate" translate="no">
         <span class="animate-pulse">⚠️</span>
         <span>POR FAVOR CONFIRMAR ASISTENCIA ANTES DEL 10 DE JULIO, 2026</span>
       </div>
@@ -272,215 +738,350 @@ export default function InvitationPreview({
     parsedHtml = parsedHtml.replace(/\{\{eventType\}\}/g, (event.type || '').toUpperCase());
     parsedHtml = parsedHtml.replace(/\{\{theme\}\}/g, `<span class="text-[9px] bg-stone-100 border border-stone-200 px-2 py-1 rounded-full font-bold text-stone-500 uppercase tracking-widest">Tema del Evento</span>`);
 
+    if (customTemplate.engine === 'v3') {
+      const variables = {
+        title: event.title || '',
+        hostName: event.hostName || '',
+        date: formattedDate || '',
+        time: event.time || '',
+        locationName: event.locationName || '',
+        locationAddress: event.locationAddress || '',
+        description: event.description || '',
+        imageUrl: imageUrl || 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=1200',
+        whatsappContact: event.whatsappContact || '',
+        fontTitle: customTemplate.fontTitle,
+        fontBody: customTemplate.fontBody,
+        countdown: widgetCountdown,
+        spotify: widgetSpotify,
+        gallery: widgetGallery,
+        video: widgetVideo,
+        giftLink: widgetGiftLink,
+        maps: widgetMaps,
+        waze: widgetWaze,
+        qrCode: widgetQrCode,
+        dressCode: widgetDressCode,
+        hotel: widgetHotel,
+        schedule: event.schedule ? JSON.stringify(event.schedule) : widgetSchedule,
+        menu: widgetMenu,
+        children: widgetChildren,
+        instagram: widgetSocials,
+        facebook: '',
+        email: widgetContactDetails,
+        website: '',
+        confirmationDeadline: widgetDeadline,
+        eventType: (event.type || '').toUpperCase()
+      };
+
+      return (
+        <div className="relative w-full h-full">
+          <InvitationExperience
+            event={event}
+            imageUrl={imageUrl}
+            isMobileSize={isMobileSize}
+            customTemplates={customTemplates}
+            onOpen={handleEnvelopeOpen}
+          >
+            <div 
+              id={`invitation-preview-${event.id}`}
+              className="w-full relative overflow-hidden transition-all duration-500 flex flex-col justify-center items-center bg-transparent"
+            >
+              <div className="w-full relative z-10">
+                <LayoutEngineV3
+                  htmlContent={customTemplate.htmlContent}
+                  event={event}
+                  variables={variables}
+                />
+              </div>
+            </div>
+          </InvitationExperience>
+          {renderControls()}
+          {renderFloatingMusicButton()}
+        </div>
+      );
+    }
+
+    if (customTemplate.engine === 'v2') {
+      const variables = {
+        title: event.title || '',
+        hostName: event.hostName || '',
+        date: formattedDate || '',
+        time: event.time || '',
+        locationName: event.locationName || '',
+        locationAddress: event.locationAddress || '',
+        description: event.description || '',
+        imageUrl: imageUrl || 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=1200',
+        whatsappContact: event.whatsappContact || '',
+        fontTitle: customTemplate.fontTitle,
+        fontBody: customTemplate.fontBody,
+        countdown: widgetCountdown,
+        spotify: widgetSpotify,
+        gallery: widgetGallery,
+        video: widgetVideo,
+        giftLink: widgetGiftLink,
+        maps: widgetMaps,
+        waze: widgetWaze,
+        qrCode: widgetQrCode,
+        dressCode: widgetDressCode,
+        hotel: widgetHotel,
+        schedule: event.schedule ? JSON.stringify(event.schedule) : widgetSchedule,
+        menu: widgetMenu,
+        children: widgetChildren,
+        instagram: widgetSocials,
+        facebook: '',
+        email: widgetContactDetails,
+        website: '',
+        confirmationDeadline: widgetDeadline,
+        eventType: (event.type || '').toUpperCase()
+      };
+
+      return (
+        <div className="relative w-full h-full">
+          <InvitationExperience
+            event={event}
+            imageUrl={imageUrl}
+            isMobileSize={isMobileSize}
+            customTemplates={customTemplates}
+            onOpen={handleEnvelopeOpen}
+          >
+            <div 
+              id={`invitation-preview-${event.id}`}
+              className="w-full relative overflow-hidden transition-all duration-500 flex flex-col justify-center items-center bg-transparent"
+            >
+              <div className="w-full relative z-10">
+                <EditorialEngineV2Renderer
+                  htmlContent={parsedHtml}
+                  event={event}
+                  variables={variables}
+                  isMobileSize={isMobileSize}
+                />
+              </div>
+            </div>
+          </InvitationExperience>
+          {renderControls()}
+          {renderFloatingMusicButton()}
+        </div>
+      );
+    }
+
     return (
-      <InvitationExperience
-        event={event}
-        imageUrl={imageUrl}
-        isMobileSize={isMobileSize}
-        customTemplates={customTemplates}
-      >
-        <div 
-          id={`invitation-preview-${event.id}`}
-          className={`w-full relative overflow-hidden transition-all duration-500 flex flex-col justify-center items-center bg-stone-50 ${
-            isMobileSize ? 'p-3 sm:p-5 min-h-[500px]' : 'p-6 sm:p-12 min-h-[600px]'
-          }`}
-          style={{ fontFamily: `'${customTemplate.fontBody}', sans-serif` }}
+      <div className="relative w-full h-full">
+        <InvitationExperience
+          event={event}
+          imageUrl={imageUrl}
+          isMobileSize={isMobileSize}
+          customTemplates={customTemplates}
+          onOpen={handleEnvelopeOpen}
         >
           <div 
-            className="w-full max-w-2xl relative z-10 animate-fade-in"
-            dangerouslySetInnerHTML={{ __html: parsedHtml }} 
-          />
-        </div>
-      </InvitationExperience>
+            id={`invitation-preview-${event.id}`}
+            className={`w-full relative overflow-hidden transition-all duration-500 flex flex-col justify-center items-center bg-stone-50 ${
+              isMobileSize ? 'p-3 sm:p-5 min-h-[500px]' : 'p-6 sm:p-12 min-h-[600px]'
+            }`}
+            style={{ fontFamily: `'${customTemplate.fontBody}', sans-serif` }}
+          >
+            <div 
+              className="w-full max-w-2xl relative z-10 animate-fade-in"
+              dangerouslySetInnerHTML={{ __html: parsedHtml }} 
+            />
+          </div>
+        </InvitationExperience>
+        {renderControls()}
+        {renderFloatingMusicButton()}
+      </div>
     );
   }
 
   const activeTemplate = TEMPLATE_STYLES[event.style as Exclude<TemplateStyle, string>] || TEMPLATE_STYLES.elegante;
 
   return (
-    <InvitationExperience
-      event={event}
-      imageUrl={imageUrl}
-      isMobileSize={isMobileSize}
-      customTemplates={customTemplates}
-    >
-      <div 
-        id={`invitation-preview-${event.id}`}
-        className={`w-full relative overflow-hidden transition-all duration-500 flex flex-col justify-center items-center ${activeTemplate.bgClass} ${
-          isMobileSize ? 'p-3 sm:p-5 min-h-[500px]' : 'p-6 sm:p-12 min-h-[600px]'
-        }`}
+    <div className="relative w-full h-full">
+      <InvitationExperience
+        event={event}
+        imageUrl={imageUrl}
+        isMobileSize={isMobileSize}
+        customTemplates={customTemplates}
+        onOpen={handleEnvelopeOpen}
       >
-      {/* Decorative borders for Elegant Style */}
-      {activeTemplate.decorations.hasBorders && (
-        <div className={`absolute pointer-events-none rounded-2xl border ${
-          isMobileSize ? 'inset-2 sm:inset-3' : 'inset-4 sm:inset-6'
-        } border-stone-300/80`} />
-      )}
+        <div 
+          id={`invitation-preview-${event.id}`}
+          className={`w-full relative overflow-hidden transition-all duration-500 flex flex-col justify-center items-center ${activeTemplate.bgClass} ${
+            isMobileSize ? 'p-3 sm:p-5 min-h-[500px]' : 'p-6 sm:p-12 min-h-[600px]'
+          }`}
+        >
+        {/* Decorative borders for Elegant Style */}
+        {activeTemplate.decorations.hasBorders && (
+          <div className={`absolute pointer-events-none rounded-2xl border ${
+            isMobileSize ? 'inset-2 sm:inset-3' : 'inset-4 sm:inset-6'
+          } border-stone-300/80`} />
+        )}
 
-      {/* Decorative Flowers for Romantic Style */}
-      {activeTemplate.decorations.hasFlowers && (
-        <div className={`absolute top-0 right-0 pointer-events-none select-none opacity-25 ${
-          isMobileSize ? 'w-24 h-24' : 'w-44 h-44'
-        }`}>
-          <svg viewBox="0 0 100 100" fill="none" className="text-rose-400 fill-current">
-            <path d="M50 0C60 30 100 50 100 50C100 50 60 70 50 100C40 70 0 50 0 50C0 50 40 30 50 0Z" />
-          </svg>
-        </div>
-      )}
-
-      {/* Decorative Leaves for Romantic / Rustic Style */}
-      {activeTemplate.decorations.hasLeaves && (
-        <div className={`absolute bottom-0 left-0 pointer-events-none select-none opacity-20 ${
-          isMobileSize ? 'w-20 h-20' : 'w-36 h-36'
-        }`}>
-          <svg viewBox="0 0 100 100" fill="none" className="text-emerald-800 fill-current">
-            <path d="M50 0C60 30 100 50 100 50C100 50 60 70 50 100C40 70 0 50 0 50C0 50 40 30 50 0Z" />
-          </svg>
-        </div>
-      )}
-
-      {/* Decorative Stars for Modern Style */}
-      {activeTemplate.decorations.hasStars && (
-        <div className="absolute inset-0 pointer-events-none select-none opacity-20 overflow-hidden">
-          <div className="absolute top-8 left-12 w-2 h-2 rounded-full bg-teal-400 animate-ping" />
-          <div className="absolute top-20 right-16 w-3 h-3 rounded-full bg-teal-300 animate-pulse" />
-          <div className="absolute bottom-12 left-1/4 w-1.5 h-1.5 rounded-full bg-teal-200" />
-          <div className="absolute bottom-24 right-1/3 w-2 h-2 rounded-full bg-teal-500 animate-ping" />
-        </div>
-      )}
-
-      {/* Decorative Confetti for Festive Style */}
-      {activeTemplate.decorations.hasConfetti && (
-        <div className="absolute inset-0 pointer-events-none select-none opacity-30 overflow-hidden">
-          <div className="absolute top-6 left-1/4 w-3 h-1.5 bg-amber-400 rotate-12 rounded-xs" />
-          <div className="absolute top-12 right-12 w-2 h-4 bg-rose-400 -rotate-45 rounded-xs" />
-          <div className="absolute top-24 left-10 w-2.5 h-2.5 bg-sky-400 rounded-full" />
-          <div className="absolute bottom-16 right-1/4 w-3 h-1.5 bg-emerald-400 rotate-45 rounded-xs" />
-          <div className="absolute bottom-8 left-12 w-4 h-1 bg-purple-400 -rotate-12" />
-        </div>
-      )}
-
-      {/* Main Core layout Frame Card */}
-      <div 
-        id={`invitation-card-inner-${event.id}`}
-        className={`w-full relative z-10 flex flex-col shadow-lg border border-stone-200/50 transition-all duration-300 ${
-          isMobileSize 
-            ? 'max-w-md bg-white/95 backdrop-blur-xs rounded-xl p-4 sm:p-5 gap-4 my-2 text-stone-800' 
-            : 'max-w-2xl bg-white/95 backdrop-blur-xs rounded-2xl p-6 sm:p-12 gap-8 my-4 text-stone-800'
-        } ${event.style === 'moderno' ? 'bg-slate-900/95 border-slate-800 text-slate-100' : ''}`}
-      >
-        {/* Category Header */}
-        <div className="text-center flex flex-col items-center gap-1">
-          <span className={`${isMobileSize ? 'text-2xl' : 'text-4xl'} filter drop-shadow-xs`}>
-            {EVENT_TYPES_METADATA[event.type]?.emoji || '✨'}
-          </span>
-          <span className={`tracking-[0.25em] uppercase font-black ${activeTemplate.primaryColor} ${
-            isMobileSize ? 'text-[9px]' : 'text-[11px]'
+        {/* Decorative Flowers for Romantic Style */}
+        {activeTemplate.decorations.hasFlowers && (
+          <div className={`absolute top-0 right-0 pointer-events-none select-none opacity-25 ${
+            isMobileSize ? 'w-24 h-24' : 'w-44 h-44'
           }`}>
-            {EVENT_TYPES_METADATA[event.type]?.name || 'Tarjeta de Invitación'}
-          </span>
-          <div className={`h-[1px] bg-stone-350/80 my-1 ${isMobileSize ? 'w-10' : 'w-16'}`} />
-          
-          <p className="text-[10px] text-stone-400 italic font-light">
-            Invitación especial hecha por la familia de:
-          </p>
-          <p className={`font-bold tracking-wide ${isMobileSize ? 'text-xs text-stone-700' : 'text-sm text-stone-800'} ${
-            event.style === 'moderno' ? 'text-slate-200' : ''
-          }`}>
-            {event.hostName}
-          </p>
-        </div>
-
-        {/* High Quality Banner Cover */}
-        <div className={`relative overflow-hidden shadow-xs border-y border-stone-100/50 ${
-          isMobileSize 
-            ? '-mx-4 sm:-mx-5 aspect-[18/9]' 
-            : '-mx-6 sm:-mx-12 aspect-[21/9]'
-        }`}>
-          <img 
-            src={imageUrl || 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=1200'} 
-            alt="Event banner" 
-            className="w-full h-full object-cover transform hover:scale-[1.02] transition-transform duration-500"
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
-        </div>
-
-        {/* Title of the event */}
-        <div className="text-center px-1">
-          <h2 className={`leading-tight font-extrabold tracking-tight ${activeTemplate.fontClassTitle} ${activeTemplate.primaryColor} ${
-            isMobileSize ? 'text-xl sm:text-2xl' : 'text-3xl sm:text-4xl'
-          }`}>
-            {event.title}
-          </h2>
-        </div>
-
-        {/* Parameters Grid */}
-        <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 border-y border-stone-200/50 py-4 my-1 ${
-          event.style === 'moderno' ? 'border-slate-800' : ''
-        }`}>
-          {/* Date Details */}
-          <div className="flex items-center gap-3 justify-center md:justify-start md:border-r border-stone-200/50 pr-2">
-            <div className={`p-2 rounded-xl border border-stone-200/80 flex-shrink-0 ${
-              event.style === 'moderno' ? 'bg-slate-950 border-slate-800' : 'bg-[#FAF8F5]'
-            }`}>
-              <Calendar className={`w-4 h-4 ${activeTemplate.primaryColor}`} />
-            </div>
-            <div className="text-left">
-              <p className="text-[9px] text-stone-400 font-extrabold uppercase tracking-widest">Cuándo será</p>
-              <p className={`text-xs font-bold ${event.style === 'moderno' ? 'text-slate-100' : 'text-stone-850'}`}>
-                {new Date(event.date + 'T00:00:00').toLocaleDateString('es-ES', { 
-                  weekday: 'long', 
-                  day: 'numeric', 
-                  month: 'long',
-                  year: 'numeric'
-                })}
-              </p>
-              <p className={`text-[10px] font-medium ${event.style === 'moderno' ? 'text-slate-350' : 'text-stone-500'}`}>A las {event.time} hrs</p>
-            </div>
-          </div>
-
-          {/* Location Details */}
-          <div className="flex items-center gap-3 justify-center md:justify-start md:pl-2">
-            <div className={`p-2 rounded-xl border border-stone-200/80 flex-shrink-0 ${
-              event.style === 'moderno' ? 'bg-slate-950 border-slate-800' : 'bg-[#FAF8F5]'
-            }`}>
-              <MapPin className={`w-4 h-4 ${activeTemplate.primaryColor}`} />
-            </div>
-            <div className="text-left min-w-0 max-w-full">
-              <p className="text-[9px] text-stone-400 font-extrabold uppercase tracking-widest">Dónde será</p>
-              <p className={`text-xs font-bold truncate ${event.style === 'moderno' ? 'text-slate-100' : 'text-stone-850'}`}>
-                {event.locationName}
-              </p>
-              <p className={`text-[10px] truncate ${event.style === 'moderno' ? 'text-slate-350' : 'text-stone-500'}`}>
-                {event.locationAddress}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Narrative Body */}
-        <div className="text-center px-2">
-          <p className={`text-xs whitespace-pre-line leading-relaxed italic ${activeTemplate.fontClassBody} ${activeTemplate.textColor}`}>
-            {event.description}
-          </p>
-        </div>
-
-        {/* Quick WhatsApp contact */}
-        {event.whatsappContact && (
-          <div className="flex justify-center mt-1">
-            <a 
-              href={`https://wa.me/${event.whatsappContact.replace(/[^0-9]/g, '')}`}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 shadow-3xs hover:bg-emerald-100/80 transition-all"
-            >
-              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" /> Consultas por WhatsApp
-            </a>
+            <svg viewBox="0 0 100 100" fill="none" className="text-rose-400 fill-current">
+              <path d="M50 0C60 30 100 50 100 50C100 50 60 70 50 100C40 70 0 50 0 50C0 50 40 30 50 0Z" />
+            </svg>
           </div>
         )}
+
+        {/* Decorative Leaves for Romantic / Rustic Style */}
+        {activeTemplate.decorations.hasLeaves && (
+          <div className={`absolute bottom-0 left-0 pointer-events-none select-none opacity-20 ${
+            isMobileSize ? 'w-20 h-20' : 'w-36 h-36'
+          }`}>
+            <svg viewBox="0 0 100 100" fill="none" className="text-emerald-800 fill-current">
+              <path d="M50 0C60 30 100 50 100 50C100 50 60 70 50 100C40 70 0 50 0 50C0 50 40 30 50 0Z" />
+            </svg>
+          </div>
+        )}
+
+        {/* Decorative Stars for Modern Style */}
+        {activeTemplate.decorations.hasStars && (
+          <div className="absolute inset-0 pointer-events-none select-none opacity-20 overflow-hidden">
+            <div className="absolute top-8 left-12 w-2 h-2 rounded-full bg-teal-400 animate-ping" />
+            <div className="absolute top-20 right-16 w-3 h-3 rounded-full bg-teal-300 animate-pulse" />
+            <div className="absolute bottom-12 left-1/4 w-1.5 h-1.5 rounded-full bg-teal-200" />
+            <div className="absolute bottom-24 right-1/3 w-2 h-2 rounded-full bg-teal-500 animate-ping" />
+          </div>
+        )}
+
+        {/* Decorative Confetti for Festive Style */}
+        {activeTemplate.decorations.hasConfetti && (
+          <div className="absolute inset-0 pointer-events-none select-none opacity-30 overflow-hidden">
+            <div className="absolute top-6 left-1/4 w-3 h-1.5 bg-amber-400 rotate-12 rounded-xs" />
+            <div className="absolute top-12 right-12 w-2 h-4 bg-rose-400 -rotate-45 rounded-xs" />
+            <div className="absolute top-24 left-10 w-2.5 h-2.5 bg-sky-400 rounded-full" />
+            <div className="absolute bottom-16 right-1/4 w-3 h-1.5 bg-emerald-400 rotate-45 rounded-xs" />
+            <div className="absolute bottom-8 left-12 w-4 h-1 bg-purple-400 -rotate-12" />
+          </div>
+        )}
+
+        {/* Main Core layout Frame Card */}
+        <div 
+          id={`invitation-card-inner-${event.id}`}
+          className={`w-full relative z-10 flex flex-col shadow-lg border border-stone-200/50 transition-all duration-300 ${
+            isMobileSize 
+              ? 'max-w-md bg-white/95 backdrop-blur-xs rounded-xl p-4 sm:p-5 gap-4 my-2 text-stone-800' 
+              : 'max-w-2xl bg-white/95 backdrop-blur-xs rounded-2xl p-6 sm:p-12 gap-8 my-4 text-stone-800'
+          } ${event.style === 'moderno' ? 'bg-slate-900/95 border-slate-800 text-slate-100' : ''}`}
+        >
+          {/* Category Header */}
+          <div className="text-center flex flex-col items-center gap-1">
+            <span className={`${isMobileSize ? 'text-2xl' : 'text-4xl'} filter drop-shadow-xs`}>
+              {EVENT_TYPES_METADATA[event.type]?.emoji || '✨'}
+            </span>
+            <span className={`tracking-[0.25em] uppercase font-black ${activeTemplate.primaryColor} ${
+              isMobileSize ? 'text-[9px]' : 'text-[11px]'
+            }`}>
+              {EVENT_TYPES_METADATA[event.type]?.name || 'Tarjeta de Invitación'}
+            </span>
+            <div className={`h-[1px] bg-stone-350/80 my-1 ${isMobileSize ? 'w-10' : 'w-16'}`} />
+            
+            <p className="text-[10px] text-stone-400 italic font-light">
+              Invitación especial hecha por la familia de:
+            </p>
+            <p className={`font-bold tracking-wide ${isMobileSize ? 'text-xs text-stone-700' : 'text-sm text-stone-800'} ${
+              event.style === 'moderno' ? 'text-slate-200' : ''
+            }`}>
+              {event.hostName}
+            </p>
+          </div>
+
+          {/* High Quality Banner Cover */}
+          <div className={`relative overflow-hidden shadow-xs border-y border-stone-100/50 ${
+            isMobileSize 
+              ? '-mx-4 sm:-mx-5 aspect-[18/9]' 
+              : '-mx-6 sm:-mx-12 aspect-[21/9]'
+          }`}>
+            <img 
+              src={imageUrl || 'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=1200'} 
+              alt="Event banner" 
+              className="w-full h-full object-cover transform hover:scale-[1.02] transition-transform duration-500"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
+          </div>
+
+          {/* Title of the event */}
+          <div className="text-center px-1">
+            <h2 className={`leading-tight font-extrabold tracking-tight ${activeTemplate.fontClassTitle} ${activeTemplate.primaryColor} ${
+              isMobileSize ? 'text-xl sm:text-2xl' : 'text-3xl sm:text-4xl'
+            }`}>
+              {event.title}
+            </h2>
+          </div>
+
+          {/* Parameters Grid */}
+          <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 border-y border-stone-200/50 py-4 my-1 ${
+            event.style === 'moderno' ? 'border-slate-800' : ''
+          }`}>
+            {/* Date Details */}
+            <div className="flex items-center gap-3 justify-center md:justify-start md:border-r border-stone-200/50 pr-2">
+              <div className={`p-2 rounded-xl border border-stone-200/80 flex-shrink-0 ${
+                event.style === 'moderno' ? 'bg-slate-950 border-slate-800' : 'bg-[#FAF8F5]'
+              }`}>
+                <Calendar className={`w-4 h-4 ${activeTemplate.primaryColor}`} />
+              </div>
+              <div className="text-left">
+                <p className="text-[9px] text-stone-400 font-extrabold uppercase tracking-widest">Cuándo será</p>
+                <p className={`text-xs font-bold ${event.style === 'moderno' ? 'text-slate-100' : 'text-stone-850'}`}>
+                  {new Date(event.date + 'T00:00:00').toLocaleDateString('es-ES', { 
+                    weekday: 'long', 
+                    day: 'numeric', 
+                    month: 'long',
+                    year: 'numeric'
+                  })}
+                </p>
+                <p className={`text-[10px] font-medium ${event.style === 'moderno' ? 'text-slate-350' : 'text-stone-500'}`}>A las {event.time} hrs</p>
+              </div>
+            </div>
+
+            {/* Location Details */}
+            <div className="flex items-center gap-3 justify-center md:justify-start md:pl-2">
+              <div className={`p-2 rounded-xl border border-stone-200/80 flex-shrink-0 ${
+                event.style === 'moderno' ? 'bg-slate-950 border-slate-800' : 'bg-[#FAF8F5]'
+              }`}>
+                <MapPin className={`w-4 h-4 ${activeTemplate.primaryColor}`} />
+              </div>
+              <div className="text-left min-w-0 max-w-full">
+                <p className="text-[9px] text-stone-400 font-extrabold uppercase tracking-widest">Dónde será</p>
+                <p className={`text-xs font-bold truncate ${event.style === 'moderno' ? 'text-slate-100' : 'text-stone-850'}`}>
+                  {event.locationName}
+                </p>
+                <p className={`text-[10px] truncate ${event.style === 'moderno' ? 'text-slate-350' : 'text-stone-500'}`}>
+                  {event.locationAddress}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Narrative Body */}
+          <div className="text-center px-2">
+            <p className={`text-xs whitespace-pre-line leading-relaxed italic ${activeTemplate.fontClassBody} ${activeTemplate.textColor}`}>
+              {event.description}
+            </p>
+          </div>
+
+          {/* Quick WhatsApp contact */}
+          {event.whatsappContact && (
+            <div className="flex justify-center mt-1">
+              <a 
+                href={`https://wa.me/${event.whatsappContact.replace(/[^0-9]/g, '')}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 shadow-3xs hover:bg-emerald-100/80 transition-all"
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-emerald-600" /> Consultas por WhatsApp
+              </a>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  </InvitationExperience>
+    </InvitationExperience>
+    {renderControls()}
+    {renderFloatingMusicButton()}
+  </div>
   );
 }

@@ -6,3 +6,5 @@ coverage/
 *.log
 .env*
 !.env.example
+# Local dev-only fallback cache (real data lives in Firestore) — includes password hashes
+data/

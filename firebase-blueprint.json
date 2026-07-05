@@ -1,0 +1,133 @@
+{
+  "entities": {
+    "EventData": {
+      "title": "EventData",
+      "description": "Event template and invitation configurations",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "hostName": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string"
+        },
+        "locationName": {
+          "type": "string"
+        },
+        "locationAddress": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "style",
+        "title",
+        "hostName",
+        "date",
+        "time",
+        "locationName",
+        "locationAddress",
+        "description",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GuestRSVP": {
+      "title": "GuestRSVP",
+      "description": "RSVP confirm status for invitations",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "guestName": {
+          "type": "string"
+        },
+        "attending": {
+          "type": "boolean"
+        },
+        "companions": {
+          "type": "number"
+        },
+        "confirmedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "eventId",
+        "guestName",
+        "attending",
+        "companions",
+        "confirmedAt"
+      ]
+    },
+    "User": {
+      "title": "User",
+      "description": "Registered editor / admin account details",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "password",
+        "role"
+      ]
+    }
+  },
+  "firestore": {
+    "/events/{eventId}": {
+      "schema": "EventData",
+      "description": "Collection of active cards and invitations"
+    },
+    "/rsvps/{rsvpId}": {
+      "schema": "GuestRSVP",
+      "description": "Collection of attendee confirmations"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user/admin registered accounts"
+    }
+  }
+}
