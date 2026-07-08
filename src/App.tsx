@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Calendar, 
   Clock, 
@@ -556,21 +556,67 @@ export default function App() {
   // Autosave the currently active invitation only — debounced so rapid typing doesn't
   // spam the network. Explicit save actions (create/update/delete buttons) also save
   // immediately; this just covers ordinary in-place editing.
+  //
+  // A plain setTimeout-in-useEffect debounce silently drops the edit if the user
+  // switches to another invitation, hides the tab, or closes the browser before the
+  // timer fires (React's cleanup just cancels it — nothing ever gets sent). pendingSaveRef
+  // tracks the not-yet-sent save so it can be flushed immediately in exactly those cases,
+  // instead of losing the edit.
+  const pendingSaveRef = useRef<{ event: EventData; timeoutId: ReturnType<typeof setTimeout> } | null>(null);
+  const prevSelectedIdRef = useRef(selectedEventId);
+
+  const flushPendingEventSave = () => {
+    const pending = pendingSaveRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timeoutId);
+    pendingSaveRef.current = null;
+    fetch('/api/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pending.event),
+      keepalive: true
+    }).catch(err => console.error('Error saving event to server:', err));
+  };
+
   useEffect(() => {
     if (!hasLoadedInitialData || isGuestView) return;
+
+    // Switching to a different invitation: flush whatever was pending for the
+    // previous one right now, rather than letting the debounce cancel it.
+    if (prevSelectedIdRef.current !== selectedEventId) {
+      flushPendingEventSave();
+      prevSelectedIdRef.current = selectedEventId;
+    }
+
     const eventToSave = events.find(e => e.id === selectedEventId);
     if (!eventToSave || !eventToSave.userId) return;
 
+    if (pendingSaveRef.current) clearTimeout(pendingSaveRef.current.timeoutId);
     const timeoutId = setTimeout(() => {
+      pendingSaveRef.current = null;
       fetch('/api/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(eventToSave)
       }).catch(err => console.error('Error saving event to server:', err));
     }, 800);
-
-    return () => clearTimeout(timeoutId);
+    pendingSaveRef.current = { event: eventToSave, timeoutId };
   }, [events, selectedEventId, hasLoadedInitialData, isGuestView]);
+
+  // Flush immediately when the tab is hidden/closed or the component unmounts, so a
+  // recent edit is never lost just because the timer hadn't fired yet.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPendingEventSave();
+    };
+    window.addEventListener('beforeunload', flushPendingEventSave);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      flushPendingEventSave();
+      window.removeEventListener('beforeunload', flushPendingEventSave);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (isGuestView) return;
